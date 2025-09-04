@@ -1,11 +1,7 @@
 name: Autowereld
 on:
   schedule:
-    - cron: "14 * * * *"
-  push:
-    branches: [ master ]
-  pull_request:
-    branches:
+    - cron: "0 0 * * *"
   workflow_dispatch:
     branches:
 
