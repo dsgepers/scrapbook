@@ -26,7 +26,7 @@ def init_database():
     cursor = conn.cursor()
 
     # Create the autowereld_batch_planning table
-    create_table_sql = """
+    create_batch_planning_sql = """
     CREATE TABLE autowereld_batch_planning (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         brand_keys TEXT,
@@ -36,28 +36,59 @@ def init_database():
     )
     """
 
-    cursor.execute(create_table_sql)
-    conn.commit()
-
+    cursor.execute(create_batch_planning_sql)
     print("Table 'autowereld_batch_planning' created successfully.")
 
-    # Verify the table was created
-    table_query = ("SELECT name FROM sqlite_master WHERE type='table' "
-                   "AND name='autowereld_batch_planning'")
-    cursor.execute(table_query)
-    result = cursor.fetchone()
+    # Create the autowereld_results table
+    create_results_sql = """
+    CREATE TABLE autowereld_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        identifier TEXT NOT NULL,
+        url TEXT NOT NULL,
+        licenseplate TEXT,
+        construction_year INTEGER,
+        mileage INTEGER,
+        price INTEGER,
+        seller_name TEXT,
+        seller_identifier TEXT,
+        tags TEXT
+    )
+    """
 
-    if result:
+    cursor.execute(create_results_sql)
+    print("Table 'autowereld_results' created successfully.")
+
+    conn.commit()
+
+    # Verify the tables were created
+    batch_planning_query = ("SELECT name FROM sqlite_master WHERE type='table' "
+                           "AND name='autowereld_batch_planning'")
+    cursor.execute(batch_planning_query)
+    batch_planning_result = cursor.fetchone()
+
+    results_query = ("SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name='autowereld_results'")
+    cursor.execute(results_query)
+    results_result = cursor.fetchone()
+
+    if batch_planning_result and results_result:
         print("Database initialization completed successfully!")
 
-        # Show table structure
+        # Show table structures
+        print("\nTable 'autowereld_batch_planning' structure:")
         cursor.execute("PRAGMA table_info(autowereld_batch_planning)")
         columns = cursor.fetchall()
-        print("\nTable structure:")
         for column in columns:
             print(f"  {column[1]} ({column[2]})")
+
+        print("\nTable 'autowereld_results' structure:")
+        cursor.execute("PRAGMA table_info(autowereld_results)")
+        columns = cursor.fetchall()
+        for column in columns:
+            nullable = "" if column[3] else " (nullable)"
+            print(f"  {column[1]} ({column[2]}){nullable}")
     else:
-        print("Error: Table was not created properly.")
+        print("Error: Tables were not created properly.")
 
     conn.close()
 

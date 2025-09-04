@@ -81,3 +81,15 @@ jobs:
     - name: Run python init_database.py
       run: |
         python autowereld/init_database.py
+    - name: Run python fetch_brands.py
+      run: |
+        python autowereld/fetch_brands.py
+    - name: Run python scrape_listings.py
+      run: |
+        python autowereld/scrape_listings.py
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: autowereld-database
+        path: autowereld/result.db
