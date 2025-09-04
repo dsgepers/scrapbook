@@ -79,33 +79,6 @@ jobs:
     #- name: Run python test_user_agent.py
     #  run: |
     #    python test_user_agent.py
-    - name: Run python raw_uc_mode.py --debug
+    - name: Run python init_database.py
       run: |
-        python raw_uc_mode.py --debug
-    - name: Run python raw_cdp.py --debug
-      run: |
-        python raw_cdp.py --debug
-    - name: Run python raw_socialblade.py --debug
-      run: |
-        python raw_socialblade.py --debug
-    - name: Run python raw_gitlab_uc.py --debug
-      run: |
-        python raw_gitlab_uc.py --debug
-    #- name: Run python raw_demo_script.py
-    #  run: |
-    #    python raw_demo_script.py
-    - name: Run python raw_cdp_drivers.py
-      run: |
-        python raw_cdp_drivers.py
-    - name: Run python raw_turnstile.py
-      run: |
-        python raw_turnstile.py --debug
-    - name: Run python raw_upwork.py
-      run: |
-        python raw_upwork.py --debug
-    - name: Upload screenshots
-      uses: actions/upload-artifact@v4
-      with:
-        name: seleniumbase-screenshots
-        path: |
-          ./latest_logs/
+        python autowereld/init_database.py
