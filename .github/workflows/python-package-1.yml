@@ -1,4 +1,4 @@
-name: CI build 1 - (Ubuntu)
+name: Autowereld
 on:
   schedule:
     - cron: "14 * * * *"
@@ -21,7 +21,7 @@ jobs:
         os: [ubuntu-latest]
         python-version: ["3.12"]
 
-    runs-on: ${{ matrix.os }}
+    runs-on: [self-hosted, linux]
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
