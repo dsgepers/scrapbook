@@ -18,6 +18,7 @@ jobs:
         python-version: ["3.12"]
 
     runs-on: [self-hosted, linux]
+    timeout-minutes: 4320
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
