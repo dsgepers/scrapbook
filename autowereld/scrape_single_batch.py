@@ -10,7 +10,44 @@ import time
 import re
 import os
 import random
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
+
+
+def build_proxy_url(base_proxy_url, href):
+    """
+    Build a proper proxy URL preserving the /fireprox/ path and using zoeken.html endpoint.
+    
+    Args:
+        base_proxy_url: The proxy base URL (e.g., 'https://rez5adtep6.execute-api.eu-central-1.amazonaws.com/fireprox/')
+        href: The href from the next link (could be relative or absolute)
+    
+    Returns:
+        Properly constructed proxy URL using zoeken.html endpoint
+    """
+    if not href:
+        return None
+        
+    # Ensure base_proxy_url ends with /fireprox/
+    if not base_proxy_url.endswith('/fireprox/'):
+        if base_proxy_url.endswith('/fireprox'):
+            base_proxy_url += '/'
+        elif base_proxy_url.endswith('/'):
+            base_proxy_url += 'fireprox/'
+        else:
+            base_proxy_url += '/fireprox/'
+    
+    # If href starts with /, it's an absolute path - extract query parameters and use zoeken.html
+    if href.startswith('/'):
+        # Find query parameters (everything after ?)
+        if '?' in href:
+            query_params = href.split('?', 1)[1]
+            return base_proxy_url + 'zoeken.html?' + query_params
+        else:
+            # No query params, just use zoeken.html
+            return base_proxy_url + 'zoeken.html'
+    
+    # If href is relative (like ?p=2), use urljoin as normal
+    return urljoin(base_proxy_url, href)
 
 
 def get_random_googlebot_ip():
@@ -309,7 +346,7 @@ def scrape_single_batch_by_id(batch_id):
             # Be more specific - we want 'next' class, not 'prev'
             next_arrow = soup.find('a', class_=lambda x: x and 'arrow' in x and 'next' in x)
             if next_arrow and next_arrow.get('href'):
-                potential_next = urljoin(current_url, next_arrow.get('href'))
+                potential_next = build_proxy_url(base_url, next_arrow.get('href'))
                 # Make sure it's not a URL we've already visited
                 if potential_next not in visited_urls:
                     next_url = potential_next
@@ -331,7 +368,7 @@ def scrape_single_batch_by_id(batch_id):
                             # Look for next page link
                             for link in pagination.find_all('a'):
                                 if link.get_text(strip=True) == str(next_page_num):
-                                    potential_next = urljoin(current_url, link.get('href'))
+                                    potential_next = build_proxy_url(base_url, link.get('href'))
                                     if potential_next not in visited_urls:
                                         next_url = potential_next
                                         print(f"Found pagination page {next_page_num}: {next_url}")
@@ -344,7 +381,7 @@ def scrape_single_batch_by_id(batch_id):
                 for link in soup.find_all('a'):
                     text = link.get_text(strip=True).lower()
                     if text in ['volgende', 'next', '>', '→'] and link.get('href'):
-                        potential_next = urljoin(current_url, link.get('href'))
+                        potential_next = build_proxy_url(base_url, link.get('href'))
                         if potential_next not in visited_urls:
                             next_url = potential_next
                             print(f"Found text-based next link: {next_url}")

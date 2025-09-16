@@ -13,6 +13,43 @@ import random
 from urllib.parse import urljoin
 
 
+def build_proxy_url(base_proxy_url, href):
+    """
+    Build a proper proxy URL preserving the /fireprox/ path and using zoeken.html endpoint.
+    
+    Args:
+        base_proxy_url: The proxy base URL (e.g., 'https://rez5adtep6.execute-api.eu-central-1.amazonaws.com/fireprox/')
+        href: The href from the next link (could be relative or absolute)
+    
+    Returns:
+        Properly constructed proxy URL using zoeken.html endpoint
+    """
+    if not href:
+        return None
+        
+    # Ensure base_proxy_url ends with /fireprox/
+    if not base_proxy_url.endswith('/fireprox/'):
+        if base_proxy_url.endswith('/fireprox'):
+            base_proxy_url += '/'
+        elif base_proxy_url.endswith('/'):
+            base_proxy_url += 'fireprox/'
+        else:
+            base_proxy_url += '/fireprox/'
+    
+    # If href starts with /, it's an absolute path - extract query parameters and use zoeken.html
+    if href.startswith('/'):
+        # Find query parameters (everything after ?)
+        if '?' in href:
+            query_params = href.split('?', 1)[1]
+            return base_proxy_url + 'zoeken.html?' + query_params
+        else:
+            # No query params, just use zoeken.html
+            return base_proxy_url + 'zoeken.html'
+    
+    # If href is relative (like ?p=2), use urljoin as normal
+    return urljoin(base_proxy_url, href)
+
+
 def get_random_googlebot_ip():
     """Generate a random IP from Googlebot IP ranges."""
     # Define the three IP ranges: 66.249.79.96/27, 66.249.79.64/27, 66.249.79.32/27
@@ -188,7 +225,8 @@ def quick_test():
     """Quick test with just 2 pages."""
     print("Quick test: scraping 2 pages of hyundai i10...")
     
-    url = "https://rez5adtep6.execute-api.eu-central-1.amazonaws.com/fireprox/zoeken.html?mrk=hyundai&mdl=hyundai_i10&il=100"
+    base_url = "https://rez5adtep6.execute-api.eu-central-1.amazonaws.com/fireprox/"
+    url = base_url + "zoeken.html?mrk=hyundai&mdl=hyundai_i10&il=100"
     
     headers = {
         'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
@@ -234,7 +272,9 @@ def quick_test():
             # Find next page link
             next_link = soup.find('a', class_=['arrow', 'next'])
             if next_link and next_link.get('href'):
-                current_url = urljoin(current_url, next_link.get('href'))
+                href = next_link.get('href')
+                print(f"Original href: {href}")
+                current_url = build_proxy_url(base_url, href)
                 print(f"Next page: {current_url[:80]}...")
             else:
                 print("No next page found")
