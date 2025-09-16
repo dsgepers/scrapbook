@@ -258,7 +258,7 @@ def scrape_single_batch_by_id(batch_id):
         'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'referer': 'https://www.autowereld.nl/',
         'user-agent': 'Googlebot',
-        'X-My-X-Forwarded-For': get_random_googlebot_ip()
+        #'X-My-X-Forwarded-For': get_random_googlebot_ip()
     }
     
     current_url = url
