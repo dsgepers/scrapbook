@@ -67,7 +67,7 @@ def main():
             # Delay between batches
             if i < len(batches):  # Don't delay after the last batch
                 print("Waiting 2 seconds before next batch...")
-                time.sleep(2)
+                time.sleep(0.2)
             
         except KeyboardInterrupt:
             print(f"\nScraping interrupted by user!")

@@ -394,7 +394,7 @@ def scrape_single_batch_by_id(batch_id):
                 print("No more pages found - pagination complete")
                 break
                 
-            time.sleep(1)  # Be respectful
+            time.sleep(0.3)  # Be respectful
             
         except Exception as e:
             print(f"Error scraping page: {e}")
