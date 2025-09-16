@@ -10,6 +10,8 @@ import time
 import re
 import os
 import random
+import math
+import concurrent.futures
 from urllib.parse import urljoin, urlparse
 
 
@@ -48,6 +50,120 @@ def build_proxy_url(base_proxy_url, href):
     
     # If href is relative (like ?p=2), use urljoin as normal
     return urljoin(base_proxy_url, href)
+
+
+def scrape_single_page(url, headers, page_num):
+    """
+    Scrape a single page and return the results.
+    
+    Args:
+        url: The URL to scrape
+        headers: Request headers
+        page_num: Page number for logging
+        
+    Returns:
+        tuple: (success, listings_data, total_found, page_num)
+    """
+    try:
+        print(f"  Scraping page {page_num}: {url[:80]}...")
+        response = requests.get(url, headers=headers, timeout=30)
+        
+        # Handle 404 as expected end of pagination
+        if response.status_code == 404:
+            print(f"  Page {page_num}: 404 - End of results")
+            return (False, [], 0, page_num)
+            
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.content, 'html.parser')
+        articles = soup.find_all('article', class_='item')
+        
+        if len(articles) == 0:
+            print(f"  Page {page_num}: No articles found")
+            return (False, [], 0, page_num)
+        
+        # Parse all listings on this page
+        listings_data = []
+        for article in articles:
+            listing_data = parse_listing(article, url)
+            if listing_data:
+                listings_data.append(listing_data)
+        
+        print(f"  Page {page_num}: Found {len(articles)} listings, parsed {len(listings_data)}")
+        return (True, listings_data, len(articles), page_num)
+        
+    except requests.exceptions.RequestException as e:
+        print(f"  Page {page_num}: Request error - {e}")
+        return (False, [], 0, page_num)
+    except Exception as e:
+        print(f"  Page {page_num}: Parse error - {e}")
+        return (False, [], 0, page_num)
+
+
+def process_parallel_pages(base_url, headers, start_page, end_page):
+    """
+    Process multiple pages in parallel.
+    
+    Args:
+        base_url: Base URL template
+        headers: Request headers
+        start_page: Starting page number
+        end_page: Ending page number (inclusive)
+        
+    Returns:
+        tuple: (all_listings_data, total_processed, last_successful_page)
+    """
+    all_listings = []
+    total_processed = 0
+    last_successful_page = start_page - 1
+    
+    # Build URLs for all pages
+    page_urls = []
+    for page_num in range(start_page, end_page + 1):
+        if page_num == 1:
+            # First page doesn't need &p= parameter
+            url = base_url
+        else:
+            # Add page parameter
+            separator = '&' if '?' in base_url else '?'
+            url = f"{base_url}{separator}p={page_num}"
+        page_urls.append((url, page_num))
+    
+    print(f"Processing pages {start_page}-{end_page} in parallel...")
+    
+    # Process pages in parallel with limited workers
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        # Submit all page requests
+        future_to_page = {
+            executor.submit(scrape_single_page, url, headers, page_num): page_num 
+            for url, page_num in page_urls
+        }
+        
+        # Collect results as they complete
+        results = []
+        for future in concurrent.futures.as_completed(future_to_page):
+            page_num = future_to_page[future]
+            try:
+                success, listings_data, found_count, returned_page = future.result()
+                results.append((returned_page, success, listings_data, found_count))
+            except Exception as e:
+                print(f"  Page {page_num}: Exception - {e}")
+                results.append((page_num, False, [], 0))
+    
+    # Sort results by page number and process
+    results.sort(key=lambda x: x[0])
+    
+    for page_num, success, listings_data, found_count in results:
+        if success:
+            all_listings.extend(listings_data)
+            total_processed += found_count
+            last_successful_page = page_num
+        else:
+            # If we hit a 404 or error, note it but continue with other pages
+            if found_count == 0:  # This was a 404 or empty page
+                print(f"  Page {page_num}: No more results")
+    
+    return all_listings, total_processed, last_successful_page
 
 
 def get_random_googlebot_ip():
@@ -298,112 +414,125 @@ def scrape_single_batch_by_id(batch_id):
         #'X-My-X-Forwarded-For': get_random_googlebot_ip()
     }
     
-    current_url = url
+    # PREDICTIVE PAGINATION STRATEGY
+    # Calculate predicted number of pages based on expected results
+    predicted_pages = math.ceil(expected_results / 100)
+    print(f"Predicted pages based on expected results: {predicted_pages}")
+    
     total_listings = 0
     new_listings = 0
-    page_count = 0
-    visited_urls = set()  # Track visited URLs to prevent loops
+    all_listings_data = []
     
-    while current_url and current_url not in visited_urls:
-        visited_urls.add(current_url)
-        page_count += 1
-        print(f"\nScraping page {page_count}: {current_url[:100]}...")
+    # Process predicted pages in parallel batches of 10
+    current_page = 1
+    
+    while current_page <= predicted_pages:
+        batch_end = min(current_page + 9, predicted_pages)  # Process 10 pages at a time
         
-        try:
-            response = requests.get(current_url, headers=headers, timeout=30)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Find all article.item elements
-            articles = soup.find_all('article', class_='item')
-            print(f"Found {len(articles)} listings on this page")
-            
-            # If no articles found, we might have reached the end
-            if len(articles) == 0:
-                print("No articles found on this page - stopping")
-                break
-            
-            page_listings = 0
-            for article in articles:
-                listing_data = parse_listing(article, current_url)
-                if listing_data:
-                    try:
-                        if save_listing_to_db(listing_data):
-                            page_listings += 1
-                            new_listings += 1
-                        total_listings += 1
-                        
-                    except Exception as e:
-                        print(f"  Error saving listing {listing_data[0]}: {e}")
-            
-            print(f"Saved {page_listings} new listings from this page (total processed: {total_listings})")
-            
-            # Find next page link - check fresh on each page
-            next_url = None
-            
-            # Method 1: Look for arrow.next link (most reliable)
-            # Be more specific - we want 'next' class, not 'prev'
-            next_arrow = soup.find('a', class_=lambda x: x and 'arrow' in x and 'next' in x)
-            if next_arrow and next_arrow.get('href'):
-                potential_next = build_proxy_url(base_url, next_arrow.get('href'))
-                # Make sure it's not a URL we've already visited
-                if potential_next not in visited_urls:
-                    next_url = potential_next
-                    print(f"Found next page: {next_url}")
-                else:
-                    print(f"Next page already visited: {potential_next}")
-            
-            # Method 2: If no arrow.next, look for pagination with numeric pages
-            if not next_url:
-                pagination = soup.find('div', class_=['pagination', 'pager', 'pages'])
-                if pagination:
-                    # Look for current page number and calculate next
-                    current_page_elem = pagination.find('span', class_='current') or pagination.find('strong')
-                    if current_page_elem:
-                        try:
-                            current_page_num = int(current_page_elem.get_text(strip=True))
-                            next_page_num = current_page_num + 1
-                            
-                            # Look for next page link
-                            for link in pagination.find_all('a'):
-                                if link.get_text(strip=True) == str(next_page_num):
-                                    potential_next = build_proxy_url(base_url, link.get('href'))
-                                    if potential_next not in visited_urls:
-                                        next_url = potential_next
-                                        print(f"Found pagination page {next_page_num}: {next_url}")
-                                    break
-                        except ValueError:
-                            pass
-            
-            # Method 3: Look for "Volgende" or "Next" text links
-            if not next_url:
-                for link in soup.find_all('a'):
-                    text = link.get_text(strip=True).lower()
-                    if text in ['volgende', 'next', '>', '→'] and link.get('href'):
-                        potential_next = build_proxy_url(base_url, link.get('href'))
-                        if potential_next not in visited_urls:
-                            next_url = potential_next
-                            print(f"Found text-based next link: {next_url}")
-                            break
-            
-            # Check if we found a valid next URL
-            if next_url:
-                current_url = next_url
-            else:
-                print("No more pages found - pagination complete")
-                break
-                
-            time.sleep(0.3)  # Be respectful
-            
-        except Exception as e:
-            print(f"Error scraping page: {e}")
+        print(f"\nProcessing predicted pages {current_page}-{batch_end} ({batch_end - current_page + 1} pages)...")
+        
+        # Process this batch of pages in parallel
+        batch_listings, batch_processed, last_successful = process_parallel_pages(
+            url, headers, current_page, batch_end
+        )
+        
+        # Save all listings from this batch
+        batch_new = 0
+        for listing_data in batch_listings:
+            try:
+                if save_listing_to_db(listing_data):
+                    batch_new += 1
+                    new_listings += 1
+                total_listings += 1
+            except Exception as e:
+                print(f"  Error saving listing {listing_data[0] if listing_data else 'unknown'}: {e}")
+        
+        print(f"Batch {current_page}-{batch_end}: Processed {batch_processed} listings, saved {batch_new} new")
+        
+        # If we didn't get results from the last page in this batch, we've likely hit the end
+        if last_successful < batch_end:
+            print(f"Hit end of results at page {last_successful}, stopping predictive phase")
             break
+            
+        current_page = batch_end + 1
+        
+        # Small delay between parallel batches
+        if current_page <= predicted_pages:
+            time.sleep(0.5)
+    
+    # SEQUENTIAL PAGINATION FALLBACK
+    # If we processed all predicted pages successfully, continue with sequential pagination
+    if current_page > predicted_pages:
+        print(f"\nPredictive phase complete. Checking for additional pages beyond {predicted_pages}...")
+        
+        # Start sequential pagination from the next page
+        sequential_page = predicted_pages + 1
+        visited_urls = set()
+        
+        # Build URL for the next page after predictions
+        separator = '&' if '?' in url else '?'
+        current_url = f"{url}{separator}p={sequential_page}"
+        
+        while current_url and current_url not in visited_urls:
+            visited_urls.add(current_url)
+            
+            print(f"\nSequential page {sequential_page}: {current_url[:100]}...")
+            
+            try:
+                response = requests.get(current_url, headers=headers, timeout=30)
+                
+                # If we get 404, we've reached the end
+                if response.status_code == 404:
+                    print(f"Page {sequential_page}: 404 - End of results")
+                    break
+                    
+                response.raise_for_status()
+                
+                soup = BeautifulSoup(response.content, 'html.parser')
+                articles = soup.find_all('article', class_='item')
+                
+                if len(articles) == 0:
+                    print(f"Page {sequential_page}: No articles found - End of results")
+                    break
+                
+                # Process listings on this page
+                page_new = 0
+                for article in articles:
+                    listing_data = parse_listing(article, current_url)
+                    if listing_data:
+                        try:
+                            if save_listing_to_db(listing_data):
+                                page_new += 1
+                                new_listings += 1
+                            total_listings += 1
+                        except Exception as e:
+                            print(f"  Error saving listing {listing_data[0]}: {e}")
+                
+                print(f"Sequential page {sequential_page}: Found {len(articles)} listings, saved {page_new} new")
+                
+                # Find next page using the existing pagination logic
+                next_url = None
+                next_arrow = soup.find('a', class_=lambda x: x and 'arrow' in x and 'next' in x)
+                if next_arrow and next_arrow.get('href'):
+                    potential_next = build_proxy_url(url.split('?')[0], next_arrow.get('href'))
+                    if potential_next not in visited_urls:
+                        next_url = potential_next
+                
+                current_url = next_url
+                sequential_page += 1
+                
+                time.sleep(1)  # Respectful delay for sequential pages
+                
+            except Exception as e:
+                print(f"Sequential page {sequential_page}: Error - {e}")
+            except Exception as e:
+                print(f"Sequential page {sequential_page}: Error - {e}")
+                break
     
     print(f"\nBatch {batch_id} completed!")
     print(f"Total listings processed: {total_listings}")
     print(f"New listings saved: {new_listings}")
-    print(f"Pages scraped: {page_count}")
+    print(f"Predicted pages: {predicted_pages}, Total pages processed: {current_page - 1 + (sequential_page - predicted_pages - 1 if 'sequential_page' in locals() else 0)}")
     
     # Update results_found in database
     update_results_found(batch_id, total_listings)
