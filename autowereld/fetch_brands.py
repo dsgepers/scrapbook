@@ -7,12 +7,32 @@ import requests
 import json
 import sqlite3
 import os
+import random
 from bs4 import BeautifulSoup
+
+
+def get_random_googlebot_ip():
+    """Generate a random IP from Googlebot IP ranges."""
+    # Define the three IP ranges: 66.249.79.96/27, 66.249.79.64/27, 66.249.79.32/27
+    ranges = [
+        (0x42F94F60, 0x42F94F7F),  # 66.249.79.96/27 (96-127)
+        (0x42F94F40, 0x42F94F5F),  # 66.249.79.64/27 (64-95)
+        (0x42F94F20, 0x42F94F3F),  # 66.249.79.32/27 (32-63)
+    ]
+    
+    # Choose a random range
+    start, end = random.choice(ranges)
+    
+    # Generate a random IP within the chosen range
+    ip_int = random.randint(start, end)
+    
+    # Convert to IP string
+    return f"{(ip_int >> 24) & 0xFF}.{(ip_int >> 16) & 0xFF}.{(ip_int >> 8) & 0xFF}.{ip_int & 0xFF}"
 
 
 def fetch_brand_data():
     """Fetch brand data from autowereld.nl and parse the response."""
-    url = 'https://www.autowereld.nl/zoeken.html'
+    url = 'https://rez5adtep6.execute-api.eu-central-1.amazonaws.com/fireprox/zoeken.html'
     
     # Parameters for the request
     params = {
@@ -32,7 +52,8 @@ def fetch_brand_data():
         'accept': 'application/json, text/javascript, */*; q=0.01',
         'referer': 'https://www.autowereld.nl/',
         'user-agent': 'Googlebot',
-        'x-requested-with': 'XMLHttpRequest'
+        'x-requested-with': 'XMLHttpRequest',
+        #'X-My-X-Forwarded-For': get_random_googlebot_ip()
     }
     
     try:
@@ -110,7 +131,7 @@ def fetch_brand_data():
 
 def fetch_model_data(brand_value):
     """Fetch model data for a specific brand from autowereld.nl."""
-    url = 'https://www.autowereld.nl/zoeken.html'
+    url = 'https://rez5adtep6.execute-api.eu-central-1.amazonaws.com/fireprox/zoeken.html'
     
     # Parameters for the request
     params = {
@@ -131,7 +152,8 @@ def fetch_model_data(brand_value):
         'accept': 'application/json, text/javascript, */*; q=0.01',
         'referer': 'https://www.autowereld.nl/',
         'user-agent': 'Googlebot',
-        'x-requested-with': 'XMLHttpRequest'
+        'x-requested-with': 'XMLHttpRequest',
+        #'X-My-X-Forwarded-For': get_random_googlebot_ip()
     }
     
     try:

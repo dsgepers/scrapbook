@@ -9,7 +9,27 @@ from bs4 import BeautifulSoup
 import time
 import re
 import os
+import random
 from urllib.parse import urljoin
+
+
+def get_random_googlebot_ip():
+    """Generate a random IP from Googlebot IP ranges."""
+    # Define the three IP ranges: 66.249.79.96/27, 66.249.79.64/27, 66.249.79.32/27
+    ranges = [
+        (0x42F94F60, 0x42F94F7F),  # 66.249.79.96/27 (96-127)
+        (0x42F94F40, 0x42F94F5F),  # 66.249.79.64/27 (64-95)
+        (0x42F94F20, 0x42F94F3F),  # 66.249.79.32/27 (32-63)
+    ]
+    
+    # Choose a random range
+    start, end = random.choice(ranges)
+    
+    # Generate a random IP within the chosen range
+    ip_int = random.randint(start, end)
+    
+    # Convert to IP string
+    return f"{(ip_int >> 24) & 0xFF}.{(ip_int >> 16) & 0xFF}.{(ip_int >> 8) & 0xFF}.{ip_int & 0xFF}"
 
 
 def extract_number(text):
@@ -223,7 +243,7 @@ def scrape_single_batch_by_id(batch_id):
     print(f"Expected results: {expected_results}")
     
     # Build the URL
-    base_url = "https://www.autowereld.nl/zoeken.html"
+    base_url = "https://rez5adtep6.execute-api.eu-central-1.amazonaws.com/fireprox/zoeken.html"
     params = ['il=100']  # 100 items per page
     
     if brand_keys:
@@ -237,7 +257,8 @@ def scrape_single_batch_by_id(batch_id):
     headers = {
         'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'referer': 'https://www.autowereld.nl/',
-        'user-agent': 'Googlebot'
+        'user-agent': 'Googlebot',
+        'X-My-X-Forwarded-For': get_random_googlebot_ip()
     }
     
     current_url = url
