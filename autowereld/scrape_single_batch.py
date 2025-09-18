@@ -111,9 +111,9 @@ def process_parallel_pages(base_url, headers, start_page, end_page):
         end_page: Ending page number (inclusive)
         
     Returns:
-        tuple: (all_listings_data, total_processed, last_successful_page)
+        tuple: (total_new_saved, total_processed, last_successful_page)
     """
-    all_listings = []
+    total_new_saved = 0
     total_processed = 0
     last_successful_page = start_page - 1
     
@@ -155,7 +155,14 @@ def process_parallel_pages(base_url, headers, start_page, end_page):
     
     for page_num, success, listings_data, found_count in results:
         if success:
-            all_listings.extend(listings_data)
+            # Batch insert all listings from this page
+            try:
+                new_saved = save_listings_batch_to_db(listings_data)
+                total_new_saved += new_saved
+                print(f"  Page {page_num}: Saved {new_saved}/{len(listings_data)} new listings to database")
+            except Exception as e:
+                print(f"  Page {page_num}: Error saving batch to database - {e}")
+            
             total_processed += found_count
             last_successful_page = page_num
         else:
@@ -163,7 +170,7 @@ def process_parallel_pages(base_url, headers, start_page, end_page):
             if found_count == 0:  # This was a 404 or empty page
                 print(f"  Page {page_num}: No more results")
     
-    return all_listings, total_processed, last_successful_page
+    return total_new_saved, total_processed, last_successful_page
 
 
 def get_random_googlebot_ip():
@@ -323,30 +330,51 @@ def parse_listing(article, base_url):
         return None
 
 
-def save_listing_to_db(listing_data):
-    """Save a single listing to the autowereld_results table."""
+def save_listings_batch_to_db(listings_data):
+    """Save a batch of listings to the autowereld_results table."""
+    if not listings_data:
+        return 0
+    
     script_dir = os.path.dirname(os.path.abspath(__file__))
     db_path = os.path.join(script_dir, "result.db")
     
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
-    # Check if listing already exists
-    cursor.execute("SELECT id FROM autowereld_results WHERE identifier = ?", (listing_data[0],))
-    if cursor.fetchone():
-        conn.close()
-        return False  # Already exists
+    # Filter out listings that already exist
+    new_listings = []
+    identifiers = [listing[0] for listing in listings_data]
     
-    cursor.execute("""
+    # Check for existing identifiers in batch
+    placeholders = ','.join(['?' for _ in identifiers])
+    cursor.execute(f"SELECT identifier FROM autowereld_results WHERE identifier IN ({placeholders})", identifiers)
+    existing_identifiers = set(row[0] for row in cursor.fetchall())
+    
+    # Keep only new listings
+    for listing in listings_data:
+        if listing[0] not in existing_identifiers:
+            new_listings.append(listing)
+    
+    if not new_listings:
+        conn.close()
+        return 0
+    
+    # Batch insert new listings
+    cursor.executemany("""
         INSERT INTO autowereld_results 
         (identifier, url, licenseplate, construction_year, mileage, price, 
          seller_name, seller_identifier, tags)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, listing_data)
+    """, new_listings)
     
     conn.commit()
     conn.close()
-    return True
+    return len(new_listings)
+
+
+def save_listing_to_db(listing_data):
+    """Save a single listing to the autowereld_results table."""
+    return save_listings_batch_to_db([listing_data])
 
 
 def update_results_found(batch_id, count):
@@ -421,7 +449,6 @@ def scrape_single_batch_by_id(batch_id):
     
     total_listings = 0
     new_listings = 0
-    all_listings_data = []
     
     # Process predicted pages in parallel batches of 10
     current_page = 1
@@ -432,20 +459,12 @@ def scrape_single_batch_by_id(batch_id):
         print(f"\nProcessing predicted pages {current_page}-{batch_end} ({batch_end - current_page + 1} pages)...")
         
         # Process this batch of pages in parallel
-        batch_listings, batch_processed, last_successful = process_parallel_pages(
+        batch_new, batch_processed, last_successful = process_parallel_pages(
             url, headers, current_page, batch_end
         )
         
-        # Save all listings from this batch
-        batch_new = 0
-        for listing_data in batch_listings:
-            try:
-                if save_listing_to_db(listing_data):
-                    batch_new += 1
-                    new_listings += 1
-                total_listings += 1
-            except Exception as e:
-                print(f"  Error saving listing {listing_data[0] if listing_data else 'unknown'}: {e}")
+        new_listings += batch_new
+        total_listings += batch_processed
         
         print(f"Batch {current_page}-{batch_end}: Processed {batch_processed} listings, saved {batch_new} new")
         
@@ -495,20 +514,21 @@ def scrape_single_batch_by_id(batch_id):
                     print(f"Page {sequential_page}: No articles found - End of results")
                     break
                 
-                # Process listings on this page
-                page_new = 0
+                # Process all listings on this page and batch insert
+                page_listings = []
                 for article in articles:
                     listing_data = parse_listing(article, current_url)
                     if listing_data:
-                        try:
-                            if save_listing_to_db(listing_data):
-                                page_new += 1
-                                new_listings += 1
-                            total_listings += 1
-                        except Exception as e:
-                            print(f"  Error saving listing {listing_data[0]}: {e}")
+                        page_listings.append(listing_data)
                 
-                print(f"Sequential page {sequential_page}: Found {len(articles)} listings, saved {page_new} new")
+                # Batch insert all listings from this page
+                try:
+                    page_new = save_listings_batch_to_db(page_listings)
+                    new_listings += page_new
+                    total_listings += len(articles)
+                    print(f"Sequential page {sequential_page}: Found {len(articles)} listings, saved {page_new} new")
+                except Exception as e:
+                    print(f"Sequential page {sequential_page}: Error saving batch to database - {e}")
                 
                 # Find next page using the existing pagination logic
                 next_url = None
@@ -523,8 +543,6 @@ def scrape_single_batch_by_id(batch_id):
                 
                 time.sleep(1)  # Respectful delay for sequential pages
                 
-            except Exception as e:
-                print(f"Sequential page {sequential_page}: Error - {e}")
             except Exception as e:
                 print(f"Sequential page {sequential_page}: Error - {e}")
                 break
