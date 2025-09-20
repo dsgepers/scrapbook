@@ -16,6 +16,28 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db.database import Database
 
 
+def set_github_output(name, value):
+    """Set GitHub Actions output variable."""
+    github_output = os.getenv('GITHUB_OUTPUT')
+    if github_output:
+        with open(github_output, 'a') as f:
+            f.write(f"{name}={value}\n")
+        print(f"Set GitHub output: {name}={value}")
+    else:
+        print(f"Would set output: {name}={value} (not in GitHub Actions)")
+
+
+def set_github_env(name, value):
+    """Set GitHub Actions environment variable for subsequent steps."""
+    github_env = os.getenv('GITHUB_ENV')
+    if github_env:
+        with open(github_env, 'a') as f:
+            f.write(f"{name}={value}\n")
+        print(f"Set GitHub environment variable: {name}={value}")
+    else:
+        print(f"Would set env var: {name}={value} (not in GitHub Actions)")
+
+
 def get_random_googlebot_ip():
     """Generate a random IP from Googlebot IP ranges."""
     # Define the three IP ranges: 66.249.79.96/27, 66.249.79.64/27, 66.249.79.32/27
@@ -364,6 +386,10 @@ def create_batch():
         
         print(f"Created new batch with ID: {batch_id}")
         
+        # Set the batch ID as GitHub Actions environment variable and output
+        set_github_env('BATCH_ID', str(batch_id))
+        set_github_output('batch_id', str(batch_id))
+        
         db.close()
         return batch_id
         
@@ -392,6 +418,10 @@ def create_batch():
             db.connection.commit()
             
             print(f"Created new batch with explicit ID: {next_id}")
+            
+            # Set the batch ID as GitHub Actions environment variable and output
+            set_github_env('BATCH_ID', str(next_id))
+            set_github_output('batch_id', str(next_id))
             
             db.close()
             return next_id
