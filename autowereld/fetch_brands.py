@@ -452,13 +452,11 @@ def save_to_database(grouped_brands):
         for i, group_obj in enumerate(grouped_brands):
             try:
                 # Use batch_id + i as the planning ID to work around the constraint
-                planning_id = batch_id if i == 0 else batch_id * 1000 + i
                 cursor.execute("""
                     INSERT INTO autowereld_batch_plannings 
-                    (id, batch_id, brand_keys, models_keys, results_expected, results_found)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    (batch_id, brand_keys, models_keys, results_expected, results_found)
+                    VALUES (%s, %s, %s, %s, %s)
                 """, (
-                    planning_id,
                     batch_id,
                     group_obj['brands'],
                     group_obj['models'],
