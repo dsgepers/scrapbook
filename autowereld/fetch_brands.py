@@ -5,10 +5,15 @@ Fetch brand data from autowereld.nl API and extract brand checkboxes with counts
 
 import requests
 import json
-import sqlite3
 import os
 import random
+from datetime import datetime
 from bs4 import BeautifulSoup
+import sys
+
+# Add parent directory to path to import Database
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from db.database import Database
 
 
 def get_random_googlebot_ip():
@@ -339,45 +344,115 @@ def group_brands_by_limit(brand_data, max_limit=9000):
     return grouped_brands
 
 
+def create_batch():
+    """Create a new batch record in autowereld_batch table and return the batch_id."""
+    try:
+        db = Database()
+        db.connect()
+        cursor = db.connection.cursor()
+        
+        # Insert new batch with current timestamp (id should auto-increment)
+        current_time = datetime.now()
+        cursor.execute("""
+            INSERT INTO autowereld_batch (created_at)
+            VALUES (%s)
+        """, (current_time,))
+        
+        # Get the auto-generated batch_id
+        batch_id = cursor.lastrowid
+        db.connection.commit()
+        
+        print(f"Created new batch with ID: {batch_id}")
+        
+        db.close()
+        return batch_id
+        
+    except Exception as e:
+        print(f"Error creating batch: {e}")
+        if 'db' in locals():
+            db.close()
+        
+        # If AUTO_INCREMENT is not working, try a different approach
+        try:
+            print("Attempting alternative approach with explicit ID...")
+            db = Database()
+            db.connect()
+            cursor = db.connection.cursor()
+            
+            # Get the max ID and increment it
+            cursor.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM autowereld_batch")
+            next_id = cursor.fetchone()[0]
+            
+            current_time = datetime.now()
+            cursor.execute("""
+                INSERT INTO autowereld_batch (id, created_at)
+                VALUES (%s, %s)
+            """, (next_id, current_time))
+            
+            db.connection.commit()
+            
+            print(f"Created new batch with explicit ID: {next_id}")
+            
+            db.close()
+            return next_id
+            
+        except Exception as e2:
+            print(f"Alternative approach also failed: {e2}")
+            if 'db' in locals():
+                db.close()
+            return None
+
+
 def save_to_database(grouped_brands):
-    """Save grouped brands data to SQLite database."""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    db_path = os.path.join(script_dir, "result.db")
-    
-    if not os.path.exists(db_path):
-        print(f"Error: Database file '{db_path}' does not exist!")
-        print("Please run init_database.py first to create the database.")
+    """Save grouped brands data to MySQL database using Database class."""
+    # First create a new batch
+    batch_id = create_batch()
+    if batch_id is None:
+        print("Failed to create batch. Cannot proceed with saving data.")
         return False
     
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
+        db = Database()
+        db.connect()
+        cursor = db.connection.cursor()
         
-        # Clear existing data
-        cursor.execute("DELETE FROM autowereld_batch_planning")
-        print("Cleared existing data from autowereld_batch_planning table.")
-        
-        # Insert new data
+        # Insert new data into autowereld_batch_plannings
+        # Note: Work around foreign key constraint by setting planning ID = batch ID
         inserted_count = 0
-        for group_obj in grouped_brands:
-            cursor.execute("""
-                INSERT INTO autowereld_batch_planning 
-                (brand_keys, models_keys, results_expected, results_found)
-                VALUES (?, ?, ?, ?)
-            """, (
-                group_obj['brands'],
-                group_obj['models'],
-                group_obj['count'],
-                0  # results_found starts at 0
-            ))
-            inserted_count += 1
+        for i, group_obj in enumerate(grouped_brands):
+            try:
+                # Use batch_id + i as the planning ID to work around the constraint
+                planning_id = batch_id if i == 0 else batch_id * 1000 + i
+                cursor.execute("""
+                    INSERT INTO autowereld_batch_plannings 
+                    (id, batch_id, brand_keys, models_keys, results_expected, results_found)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (
+                    planning_id,
+                    batch_id,
+                    group_obj['brands'],
+                    group_obj['models'],
+                    group_obj['count'],
+                    0  # results_found starts at 0
+                ))
+                inserted_count += 1
+            except Exception as e:
+                print(f"Error inserting planning record {inserted_count + 1}: {e}")
+                print(f"Batch ID: {batch_id}, Brands: {group_obj['brands'][:50]}...")
+                # Continue with next record
+                continue
         
-        conn.commit()
+        db.connection.commit()
         
-        print(f"Successfully inserted {inserted_count} records into the database.")
+        print(f"Successfully inserted {inserted_count} records into the database for batch {batch_id}.")
         
         # Show some sample records
-        cursor.execute("SELECT * FROM autowereld_batch_planning LIMIT 5")
+        cursor.execute("""
+            SELECT id, brand_keys, models_keys, results_expected, results_found 
+            FROM autowereld_batch_plannings 
+            WHERE batch_id = %s 
+            LIMIT 5
+        """, (batch_id,))
         sample_records = cursor.fetchall()
         
         print("\nSample database records:")
@@ -388,24 +463,23 @@ def save_to_database(grouped_brands):
             model_keys = record[2][:30] + "..." if len(record[2]) > 30 else record[2]
             print(f"{record[0]:2} | {brand_keys:<30} | {model_keys:<30} | {record[3]:8} | {record[4]:5}")
         
-        # Show total count
-        cursor.execute("SELECT COUNT(*) FROM autowereld_batch_planning")
+        # Show total count for this batch
+        cursor.execute("SELECT COUNT(*) FROM autowereld_batch_plannings WHERE batch_id = %s", (batch_id,))
         total_count = cursor.fetchone()[0]
-        print(f"\nTotal records in database: {total_count}")
+        print(f"\nTotal records in database for batch {batch_id}: {total_count}")
         
-        # Show total expected results
-        cursor.execute("SELECT SUM(results_expected) FROM autowereld_batch_planning")
+        # Show total expected results for this batch
+        cursor.execute("SELECT SUM(results_expected) FROM autowereld_batch_plannings WHERE batch_id = %s", (batch_id,))
         total_expected = cursor.fetchone()[0]
-        print(f"Total expected results: {total_expected}")
+        print(f"Total expected results for batch {batch_id}: {total_expected}")
         
-        conn.close()
+        db.close()
         return True
         
-    except sqlite3.Error as e:
-        print(f"Database error: {e}")
-        return False
     except Exception as e:
-        print(f"Unexpected error while saving to database: {e}")
+        print(f"Database error: {e}")
+        if 'db' in locals():
+            db.close()
         return False
 
 
@@ -448,7 +522,7 @@ def main():
         print("=" * 50)
         print(f"Total groups: {len(grouped_brands)}")
         
-        # Save grouped data to SQLite database
+        # Save grouped data to MySQL database
         print("\n" + "=" * 50)
         print("SAVING TO DATABASE")
         print("=" * 50)
@@ -459,14 +533,6 @@ def main():
             print("Data successfully saved to database!")
         else:
             print("Failed to save data to database.")
-            
-            # Fallback: save to JSON file
-            print("Saving to JSON file as fallback...")
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            grouped_file = os.path.join(script_dir, "grouped_brands_fallback.json")
-            with open(grouped_file, 'w', encoding='utf-8') as f:
-                json.dump(sorted_groups, f, indent=2, ensure_ascii=False)
-            print(f"Fallback data saved to: {grouped_file}")
         
     else:
         print("No brand data found or error occurred.")

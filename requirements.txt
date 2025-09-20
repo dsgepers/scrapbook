@@ -4,3 +4,4 @@ pyvirtualdisplay
 pdbp
 tabcompleter
 sbvirtualdisplay
+mysql-connector-python

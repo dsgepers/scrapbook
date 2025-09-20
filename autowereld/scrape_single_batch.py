@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-Production scraper - process one batch from autowereld_batch_planning table.
+Production scraper - process one batch from autowereld_batch_plannings table.
 """
 
-import sqlite3
 import requests
 from bs4 import BeautifulSoup
 import time
@@ -13,6 +12,12 @@ import random
 import math
 import concurrent.futures
 from urllib.parse import urljoin, urlparse
+import sys
+from datetime import datetime
+
+# Add parent directory to path to import Database class
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from db.database import Database
 
 
 def build_proxy_url(base_proxy_url, href):
@@ -100,7 +105,7 @@ def scrape_single_page(url, headers, page_num):
         return (False, [], 0, page_num)
 
 
-def process_parallel_pages(base_url, headers, start_page, end_page):
+def process_parallel_pages(base_url, headers, start_page, end_page, batch_id):
     """
     Process multiple pages in parallel.
     
@@ -109,6 +114,7 @@ def process_parallel_pages(base_url, headers, start_page, end_page):
         headers: Request headers
         start_page: Starting page number
         end_page: Ending page number (inclusive)
+        batch_id: Batch ID for database storage
         
     Returns:
         tuple: (total_new_saved, total_processed, last_successful_page)
@@ -157,7 +163,7 @@ def process_parallel_pages(base_url, headers, start_page, end_page):
         if success:
             # Batch insert all listings from this page
             try:
-                new_saved = save_listings_batch_to_db(listings_data)
+                new_saved = save_listings_batch_to_db(listings_data, batch_id)
                 total_new_saved += new_saved
                 print(f"  Page {page_num}: Saved {new_saved}/{len(listings_data)} new listings to database")
             except Exception as e:
@@ -330,96 +336,103 @@ def parse_listing(article, base_url):
         return None
 
 
-def save_listings_batch_to_db(listings_data):
-    """Save a batch of listings to the autowereld_results table."""
+def save_listings_batch_to_db(listings_data, batch_id):
+    """Save a batch of listings to the autowereld_batch_results table."""
     if not listings_data:
         return 0
-    
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    db_path = os.path.join(script_dir, "result.db")
-    
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    
+
+    db = Database()
+    db.connect()
+    cursor = db.connection.cursor()
+
     # Filter out listings that already exist
     new_listings = []
     identifiers = [listing[0] for listing in listings_data]
-    
+
     # Check for existing identifiers in batch
-    placeholders = ','.join(['?' for _ in identifiers])
-    cursor.execute(f"SELECT identifier FROM autowereld_results WHERE identifier IN ({placeholders})", identifiers)
+    placeholders = ','.join(['%s' for _ in identifiers])
+    cursor.execute(f"SELECT identifier FROM autowereld_batch_results WHERE identifier IN ({placeholders})", identifiers)
     existing_identifiers = set(row[0] for row in cursor.fetchall())
-    
-    # Keep only new listings
+
+    # Keep only new listings and add batch_id
     for listing in listings_data:
         if listing[0] not in existing_identifiers:
-            new_listings.append(listing)
-    
+            # Convert listing tuple to list, add batch_id and created_at, remove tags (not in new schema)
+            new_listing = [
+                batch_id,  # batch_id
+                listing[0],  # identifier
+                listing[1],  # url
+                listing[2],  # licenseplate
+                listing[3],  # construction_year
+                listing[4],  # mileage
+                listing[5],  # price
+                listing[6],  # seller_name
+                listing[7],  # seller_identifier
+                datetime.now()  # created_at
+            ]
+            new_listings.append(new_listing)
+
     if not new_listings:
-        conn.close()
+        db.close()
         return 0
-    
+
     # Batch insert new listings
     cursor.executemany("""
-        INSERT INTO autowereld_results 
-        (identifier, url, licenseplate, construction_year, mileage, price, 
-         seller_name, seller_identifier, tags)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO autowereld_batch_results 
+        (batch_id, identifier, url, licenseplate, construction_year, mileage, price, 
+         seller_name, seller_identifier, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, new_listings)
-    
-    conn.commit()
-    conn.close()
+
+    db.connection.commit()
+    db.close()
     return len(new_listings)
 
 
-def save_listing_to_db(listing_data):
-    """Save a single listing to the autowereld_results table."""
-    return save_listings_batch_to_db([listing_data])
+def save_listing_to_db(listing_data, batch_id):
+    """Save a single listing to the autowereld_batch_results table."""
+    return save_listings_batch_to_db([listing_data], batch_id)
 
 
-def update_results_found(batch_id, count):
+def update_results_found(planning_id, count):
     """Update the results_found field for a batch planning record."""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    db_path = os.path.join(script_dir, "result.db")
-    
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    db = Database()
+    db.connect()
+    cursor = db.connection.cursor()
     
     cursor.execute("""
-        UPDATE autowereld_batch_planning 
-        SET results_found = ? 
-        WHERE id = ?
-    """, (count, batch_id))
+        UPDATE autowereld_batch_plannings 
+        SET results_found = %s 
+        WHERE id = %s
+    """, (count, planning_id))
     
-    conn.commit()
-    conn.close()
+    db.connection.commit()
+    db.close()
 
 
-def scrape_single_batch_by_id(batch_id):
-    """Scrape a specific batch by its ID."""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    db_path = os.path.join(script_dir, "result.db")
-    
-    # Get the specific batch
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+def scrape_single_batch_by_id(planning_id):
+    """Scrape a specific batch by its planning record ID."""
+    # Get the specific batch planning record
+    db = Database()
+    db.connect()
+    cursor = db.connection.cursor()
     
     cursor.execute("""
-        SELECT id, brand_keys, models_keys, results_expected 
-        FROM autowereld_batch_planning 
-        WHERE id = ?
-    """, (batch_id,))
+        SELECT id, batch_id, brand_keys, models_keys, results_expected 
+        FROM autowereld_batch_plannings 
+        WHERE id = %s
+    """, (planning_id,))
     
     record = cursor.fetchone()
-    conn.close()
+    db.close()
     
     if not record:
-        print(f"Batch {batch_id} not found!")
+        print(f"Planning record {planning_id} not found!")
         return 0
     
-    batch_id, brand_keys, models_keys, expected_results = record
+    planning_id, batch_id, brand_keys, models_keys, expected_results = record
     
-    print(f"Processing batch {batch_id}: {brand_keys}")
+    print(f"Processing planning record {planning_id} (batch {batch_id}): {brand_keys}")
     print(f"Models: {models_keys[:100]}..." if models_keys and len(models_keys) > 100 else f"Models: {models_keys}")
     print(f"Expected results: {expected_results}")
     
@@ -460,7 +473,7 @@ def scrape_single_batch_by_id(batch_id):
         
         # Process this batch of pages in parallel
         batch_new, batch_processed, last_successful = process_parallel_pages(
-            url, headers, current_page, batch_end
+            url, headers, current_page, batch_end, batch_id
         )
         
         new_listings += batch_new
@@ -523,7 +536,7 @@ def scrape_single_batch_by_id(batch_id):
                 
                 # Batch insert all listings from this page
                 try:
-                    page_new = save_listings_batch_to_db(page_listings)
+                    page_new = save_listings_batch_to_db(page_listings, batch_id)
                     new_listings += page_new
                     total_listings += len(articles)
                     print(f"Sequential page {sequential_page}: Found {len(articles)} listings, saved {page_new} new")
@@ -553,30 +566,28 @@ def scrape_single_batch_by_id(batch_id):
     print(f"Predicted pages: {predicted_pages}, Total pages processed: {current_page - 1 + (sequential_page - predicted_pages - 1 if 'sequential_page' in locals() else 0)}")
     
     # Update results_found in database
-    update_results_found(batch_id, total_listings)
+    update_results_found(planning_id, total_listings)
     
     return new_listings
 
 
 def scrape_single_batch():
     """Scrape the smallest batch from the batch planning table."""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    db_path = os.path.join(script_dir, "result.db")
-    
     # Get the smallest batch
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    db = Database()
+    db.connect()
+    cursor = db.connection.cursor()
     
     cursor.execute("""
         SELECT id, brand_keys, models_keys, results_expected 
-        FROM autowereld_batch_planning 
+        FROM autowereld_batch_plannings 
         WHERE results_found = 0 
         ORDER BY results_expected ASC 
         LIMIT 1
     """)
     
     record = cursor.fetchone()
-    conn.close()
+    db.close()
     
     if not record:
         print("No unprocessed batches found!")

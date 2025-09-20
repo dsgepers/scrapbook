@@ -4,29 +4,31 @@ Scrape vehicle listings from autowereld.nl based on batch planning records.
 This script processes all unprocessed batches by calling the single batch scraper.
 """
 
-import sqlite3
 import os
 import time
+import sys
 from scrape_single_batch import scrape_single_batch_by_id
+
+# Add parent directory to path to import Database class
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from db.database import Database
 
 
 def get_unprocessed_batches():
     """Get all unprocessed batch IDs ordered by expected results (smallest first)."""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    db_path = os.path.join(script_dir, "result.db")
-    
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    db = Database()
+    db.connect()
+    cursor = db.connection.cursor()
     
     cursor.execute("""
         SELECT id, brand_keys, results_expected 
-        FROM autowereld_batch_planning 
+        FROM autowereld_batch_plannings 
         WHERE results_found = 0
         ORDER BY results_expected ASC
     """)
     
     records = cursor.fetchall()
-    conn.close()
+    db.close()
     
     return records
 

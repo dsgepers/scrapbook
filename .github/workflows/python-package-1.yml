@@ -7,8 +7,12 @@ on:
 
 jobs:
   build:
-
     env:
+      MYSQL_HOST: ${{ vars.MYSQL_HOST }}
+      MYSQL_PORT: ${{ vars.MYSQL_PORT }}
+      MYSQL_USER: ${{ secrets.MYSQL_USER }}
+      MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+      MYSQL_DATABASE: ${{ secrets.MYSQL_DATABASE }}
       PY_COLORS: "1"
     strategy:
       fail-fast: false
@@ -75,18 +79,18 @@ jobs:
     #- name: Run python test_user_agent.py
     #  run: |
     #    python test_user_agent.py
-    - name: Run python init_database.py
-      run: |
-        python autowereld/init_database.py
+    # - name: Run python init_database.py
+    #   run: |
+    #     python autowereld/init_database.py
     - name: Run python fetch_brands.py
       run: |
         python autowereld/fetch_brands.py
-    - name: Run python scrape_listings.py
-      run: |
-        python autowereld/scrape_listings.py
+    # - name: Run python scrape_listings.py
+    #   run: |
+    #     python autowereld/scrape_listings.py
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: autowereld-database
-        path: autowereld/result.db
+    # - name: Upload artifact
+    #   uses: actions/upload-artifact@v4
+    #   with:
+    #     name: autowereld-database
+    #     path: autowereld/result.db
